@@ -440,9 +440,33 @@ function isTeamEditor(req) {
 }
 
 function editorAssignedToWorkspace(workspace, editorDisplayName) {
-  const a = normalizeEditorName(workspace?.editor);
-  const b = normalizeEditorName(editorDisplayName);
-  return Boolean(a && b && a === b);
+  const me = normalizeEditorName(editorDisplayName);
+  if (!me) return false;
+  const extra = Array.isArray(workspace?.extraEditors)
+    ? workspace.extraEditors
+    : [];
+  return [workspace?.editor, ...extra].some(
+    (assigned) => normalizeEditorName(assigned) === me,
+  );
+}
+
+const MAX_EXTRA_EDITORS = 3;
+
+/** Trim, drop empties/duplicates/the lead editor, cap at MAX_EXTRA_EDITORS. */
+function sanitizeExtraEditors(list, leadEditor) {
+  if (!Array.isArray(list)) return [];
+  const lead = normalizeEditorName(leadEditor);
+  const seen = new Set();
+  const out = [];
+  for (const raw of list) {
+    const name = typeof raw === "string" ? raw.trim() : "";
+    const key = normalizeEditorName(name);
+    if (!key || key === lead || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+    if (out.length >= MAX_EXTRA_EDITORS) break;
+  }
+  return out;
 }
 
 /** Returns false if a response was already sent (403/404). */
@@ -1769,7 +1793,8 @@ router.get("/workspaces", auth(TEAM_ALL_ACCESS), async (req, res) => {
       if (!name) {
         return res.json([]);
       }
-      query = { editor: new RegExp(`^${escapeRegExp(name)}$`, "i") };
+      const nameRegex = new RegExp(`^${escapeRegExp(name)}$`, "i");
+      query = { $or: [{ editor: nameRegex }, { extraEditors: nameRegex }] };
     }
     const archivedParam = String(req.query.archived || "").trim().toLowerCase();
     const archivedOnly =
@@ -1815,6 +1840,10 @@ router.post("/workspaces", auth(TEAM_ADMIN_ONLY), async (req, res) => {
     const clientId = await resolveClientIdFromPayload(req.body);
     const workspace = await Workspace.create({
       ...req.body,
+      extraEditors: sanitizeExtraEditors(
+        req.body.extraEditors,
+        req.body.editor,
+      ),
       clientId: clientId || req.body.clientId,
       batches: Array.isArray(req.body.batches) ? req.body.batches : [],
     });
@@ -1845,6 +1874,12 @@ router.put("/workspaces/:id", auth(TEAM_ALL_ACCESS), async (req, res) => {
     }
     const clientId = await resolveClientIdFromPayload(req.body);
     Object.assign(existingWorkspace, req.body);
+    if ("extraEditors" in req.body || "editor" in req.body) {
+      existingWorkspace.extraEditors = sanitizeExtraEditors(
+        existingWorkspace.extraEditors,
+        existingWorkspace.editor,
+      );
+    }
     const workspace = await existingWorkspace.save();
     if (clientId && !workspace.clientId) {
       workspace.clientId = clientId;

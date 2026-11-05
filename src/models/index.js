@@ -370,6 +370,9 @@ const WorkspaceSchema = new Schema(
     clientId: { type: Schema.Types.ObjectId, ref: "Client" },
     client: String,
     editor: String,
+    // Optional extra editors (max 3, so 4 incl. lead `editor`). All
+    // assigned editors can see/work in the workspace.
+    extraEditors: { type: [String], default: [] },
     shootDate: String,
     shootTime: String,
     shootStatus: {
